@@ -50,7 +50,13 @@ def xformers_forward(
 
     kv_seq_len = key_states.shape[-2]
     if past_key_value is not None:
-        kv_seq_len += past_key_value[0].shape[-2]
+        if self.layer_idx is None:
+            raise ValueError(
+                f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
+                "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
+                "with a layer index."
+            )
+        kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
     cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
     (
         query_states,
@@ -61,9 +67,8 @@ def xformers_forward(
     # [bsz, nh, t, hd]
 
     if past_key_value is not None:
-        # reuse k, v, self_attention
-        key_states = torch.cat([past_key_value[0], key_states], dim=2)
-        value_states = torch.cat([past_key_value[1], value_states], dim=2)
+        cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+        key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
     past_key_value = (key_states, value_states) if use_cache else None
 
